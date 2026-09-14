@@ -1,0 +1,19 @@
+{
+  "vars": {
+    "ADMIN_HOST": "admin.example.com",
+    "ACCESS_TEAM_DOMAIN": "your-team.cloudflareaccess.com",
+    "ACCESS_AUD": "your-access-application-audience",
+    "ADMIN_EMAIL": "admin@example.com"
+  },
+  "database_id": "00000000-0000-0000-0000-000000000000",
+  "routes": [
+    {
+      "pattern": "example.com/public/*",
+      "zone_name": "example.com"
+    },
+    {
+      "pattern": "admin.example.com",
+      "custom_domain": true
+    }
+  ]
+}

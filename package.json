@@ -1,0 +1,37 @@
+{
+  "name": "isitjunk",
+  "version": "1.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "Cloudflare Worker rebuild of the n8n 'isitjunk' email-analysis automation: inbound mail via Cloudflare Email Routing -> ZDR-enforced LLM junk analysis via OpenRouter -> verdict reply via message.reply() -> aggregate stats only.",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "node scripts/deployment.mjs deploy",
+    "upload:version": "node scripts/deployment.mjs versions upload",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "tail": "node scripts/deployment.mjs tail",
+    "db:init:local": "wrangler d1 execute isitjunk_email --local --file=./schema.sql",
+    "db:init:remote": "node scripts/deployment.mjs d1 execute DB --remote --file=schema.sql",
+    "verify": "npm run typecheck && npm run test",
+    "config:deployment": "node scripts/deployment.mjs --prepare-only"
+  },
+  "dependencies": {
+    "jose": "^6.2.12",
+    "mimetext": "^3.0.16",
+    "postal-mime": "^2.7.5",
+    "tldts": "^7.4.9"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260719.1",
+    "@types/node": "^22.20.1",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.131.1"
+  }
+}

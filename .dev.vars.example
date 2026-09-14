@@ -1,0 +1,20 @@
+# Local secrets for `wrangler dev` (auto-loaded). Copy to `.dev.vars`.
+# NEVER commit .dev.vars — it is gitignored.
+
+OPENROUTER_API_KEY="sk-or-..."
+
+# Configure private Access variables separately for local admin testing.
+# Local admin requests also require a signed assertion; there is no password bypass.
+
+# Optional: override the model (else uses the wrangler.jsonc vars value).
+# OPENROUTER_MODEL="openai/gpt-5.4-mini"
+
+# Optional: ZDR-enforced fallback models, tried in order (comma-separated).
+# OPENROUTER_FALLBACK_MODELS="openai/gpt-5.4,anthropic/claude-haiku-4.5"
+
+# Optional: restrict the public /public/stats CORS origin (defaults to "*").
+# ALLOWED_STATS_ORIGIN="https://www.isitjunk.com"
+
+
+# Optional: cap on analyses per UTC day (default = 200; requires the DB binding).
+# MAX_ANALYSES_PER_DAY="200"
