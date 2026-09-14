@@ -6,6 +6,32 @@ asks a language model for a junk assessment, and emails a verdict with HTML and 
 This is an advisory second opinion. A low score is not a guarantee that a message,
 link, or attachment is safe.
 
+## At a glance
+
+- **Input:** suspicious email forwarded to `report@isitjunk.com`.
+- **Output:** an email assessment of Junk, Not Junk, or Uncertain, with reasons and
+  verification limits in HTML and plain text.
+- **Runtime:** a TypeScript Cloudflare Worker, Email Routing, Email Sending, D1,
+  and OpenRouter with Zero Data Retention routing enforced.
+- **Storage:** aggregate verdict and daily admission counters only.
+
+This repository contains the email service and its public statistics and admin
+routes.
+
+## Contents
+
+- [Local development](#local-development)
+- [Command reference](#command-reference)
+- [Repository map](#repository-map)
+- [Processing and admission](#processing-and-admission)
+- [Private deployment configuration](#private-deployment-configuration)
+- [Configuration](#configuration)
+- [Domain evidence and classification](#domain-evidence-and-classification)
+- [HTTP routes and statistics](#http-routes-and-statistics)
+- [Privacy and publication](#privacy-and-publication)
+- [Contributing](#contributing)
+- [License](#license)
+
 ## Processing and admission
 
 1. Cloudflare Email Routing invokes the `email()` handler. The Worker reads at most
@@ -50,18 +76,66 @@ prove individual mailbox consent on a provider that permits same-domain spoofing
 Use Node 22.13+ (CI uses Node 22; tests include Node's built-in SQLite).
 
 ```sh
+git clone https://github.com/esaueng/isitjunk.git
+cd isitjunk
 npm ci
+npm run verify
+```
+
+To start the local HTTP server:
+
+```sh
 cp .dev.vars.example .dev.vars
 # Set the development OPENROUTER_API_KEY in .dev.vars if needed.
 npm run db:init:local
 npm run dev
-npm run verify
 ```
+
+Open the local URL printed by Wrangler. `/` provides the health check, `/public`
+the aggregate dashboard, and `/public/stats` the JSON statistics. The development
+server stays running; run further commands in another terminal.
 
 Tests stub external mail and model services. Budget tests execute the actual admission
 SQL in in-memory SQLite. No test sends real mail or submits email to a model.
 `wrangler dev` serves HTTP routes; real inbound Email Routing and outbound delivery
 require a separately authorized deployment and controlled end-to-end verification.
+
+## Command reference
+
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Start the local Wrangler HTTP server |
+| `npm run verify` | Run TypeScript checks and the test suite, as CI does |
+| `npm run typecheck` | Check TypeScript without emitting files |
+| `npm test` | Run the test suite once |
+| `npm run test:watch` | Run tests in watch mode |
+| `npm run db:init:local` | Apply `schema.sql` to local D1 |
+| `npm run config:deployment` | Validate private settings and generate deployment configuration |
+| `npm run deploy -- --dry-run` | Build with private configuration without publishing |
+| `npm run deploy` | Deploy using private configuration |
+| `npm run upload:version` | Upload a Worker version using private configuration |
+| `npm run tail` | Stream live Worker logs using private configuration |
+| `npm run db:init:remote` | Apply `schema.sql` to the configured remote D1 database |
+
+CI also runs `npm audit --audit-level=high`. Deployment and remote database
+commands affect Cloudflare resources; see the setup and authorization requirements below.
+
+## Repository map
+
+| Path | Responsibility |
+|---|---|
+| `src/index.ts` | Worker entry point and request handling |
+| `src/extract.ts`, `src/payload.ts` | Sender extraction and bounded email payloads |
+| `src/verify.ts`, `src/domain-data.ts` | Domain evidence and local domain lists |
+| `src/prompt.ts`, `src/openrouter.ts` | Classification instructions and model requests |
+| `src/email.ts` | Verdict email rendering and delivery |
+| `src/budget.ts`, `src/stats.ts` | Daily admission budget and aggregate statistics |
+| `src/access.ts`, `src/admin.ts`, `src/public.ts` | Access verification and HTTP interfaces |
+| `src/config.ts`, `src/types.ts`, `src/util.ts` | Defaults, shared types, and utilities |
+| `test/` | Automated tests and external-service stubs |
+| `schema.sql` | D1 table definitions |
+| `scripts/deployment.mjs` | Private deployment configuration and Wrangler wrapper |
+| `wrangler.jsonc`, `deployment.example.json` | Public configuration templates |
 
 ## Private deployment configuration
 
@@ -234,3 +308,15 @@ Never commit real deployment settings or copy private build output into public i
 or pull requests. Ignoring a file does not remove it from existing commits.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting.
+
+## Contributing
+
+Keep changes focused and include regression coverage for behavior fixes. Run
+`npm run verify` and `npm audit --audit-level=high` before opening a pull request.
+Use illustrative identities in fixtures and keep credentials, private deployment
+settings, and live logs out of commits and pull requests. Report vulnerabilities
+through [SECURITY.md](SECURITY.md).
+
+## License
+
+Licensed under [Apache License 2.0](LICENSE).
