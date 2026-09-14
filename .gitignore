@@ -1,0 +1,23 @@
+node_modules/
+.wrangler/
+.dev.vars
+dist/
+*.log
+
+# editor / OS
+.DS_Store
+
+# agent tooling (local, per-developer)
+.claude/settings.local.json
+.claude/worktrees/
+
+# Private deployment configuration and developer state
+.deployment/
+.codex/
+.env
+.env.*
+!.env.example
+.dev.vars.*
+!.dev.vars.example
+*.pem
+*.key
