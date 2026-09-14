@@ -16,8 +16,7 @@ link, or attachment is safe.
 - **Storage:** aggregate verdict and daily admission counters only.
 
 This repository contains the email service and its public statistics and admin
-routes. The marketing website lives in
-[`esaueng/isitjunk-website`](https://github.com/esaueng/isitjunk-website).
+routes.
 
 ## Contents
 
