@@ -41,7 +41,7 @@ jobs:
       # check out a PR head or run its programs with the fingerprint key.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: b3cb6c9e03b9aeca13851910950a9a9786fedafe
+          ref: aabfe230034f545548c87842fe29fdd04dc33411
           persist-credentials: false
           sparse-checkout: .github/privacy
       - name: Inspect incoming objects and publish the exact-head check
