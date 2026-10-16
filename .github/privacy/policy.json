@@ -6,8 +6,8 @@
     "2026-10-16-email-followup"
   ],
   "verification_digest": "256eab0fb8d7c30211354d67fd3db8de0a62fdf010001a81a8a9d4050f111dbe",
-  "blocked_file_sha256": "c7f90d82a7d0ad98d7ab17ed010be2d346a4f8e994ab791a46fc08e35e181f01",
-  "blocked_object_count": 37,
+  "blocked_file_sha256": "cebcef27bfb595581b6dd7032fedf1d70bfa08f5c2faf4c4f25bf9e1850824b1",
+  "blocked_object_count": 61268,
   "identifiers": [
     {
       "length": 15,
@@ -34,5 +34,13 @@
       "prefix_digest": "2ed1c392fa5f6468329786036a9a71ed5308c1a8cf3a6de41032321a10cc7a42",
       "digest": "61f1dbaa00417d0d67ccce2d084997f7c9dc11f933b804a6ac3cddc19882198a"
     }
+  ],
+  "object_ledger_scope": [
+    "esaueng/OpenFEA",
+    "esaueng/OpenLattice3D",
+    "esaueng/OpenZCAD",
+    "esaueng/glimpse",
+    "esaueng/isitjunk",
+    "esaueng/remus"
   ]
 }
