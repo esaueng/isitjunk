@@ -8,7 +8,7 @@ export default defineConfig({
     alias: [
       {
         find: /^cloudflare:email$/,
-        replacement: fileURLToPath(new URL('./test/stubs/cloudflare-email.ts', import.meta.url)),
+        replacement: fileURLToPath(new URL('./test/stubs/cloudflare-email.ts', import.meta.url).href),
       },
     ],
   },
