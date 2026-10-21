@@ -124,6 +124,9 @@ export async function fetchWithRetry(
       const attemptInit = timeoutMs ? { ...init, signal: AbortSignal.timeout(timeoutMs) } : init;
       const res = await fetch(url, attemptInit);
       if ((res.status >= 500 || res.status === 429) && attempt < retries) {
+        // This response is discarded. Start releasing its stream before the
+        // backoff; a stalled or rejected cancellation must not stall retries.
+        void res.body?.cancel().catch(() => undefined);
         await sleep(backoffMs * (attempt + 1));
         continue;
       }
