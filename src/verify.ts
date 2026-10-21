@@ -14,8 +14,8 @@ interface VerifyOptions {
   fetcher?: typeof fetch;
 }
 
-type DohAnswer = { data?: string; type?: number };
-type DohResponse = { Status?: number; Answer?: DohAnswer[] };
+const DNS_RECORD_TYPES = { A: 1, AAAA: 28, MX: 15, TXT: 16 } as const;
+type DnsRecordType = keyof typeof DNS_RECORD_TYPES;
 type CheckOptions = Required<Pick<VerifyOptions, 'timeoutMs' | 'now' | 'fetcher'>> & { signal: AbortSignal };
 type DnsResult = { dns: DomainEvidence['dns']; nxdomain: boolean; complete: boolean };
 type WebsiteResult = { website: DomainEvidence['website']; complete: boolean };
@@ -151,7 +151,7 @@ async function checkDns(
 
 async function doh(
   name: string,
-  type: string,
+  type: DnsRecordType,
   options: CheckOptions,
 ): Promise<{ nxdomain: boolean; answers: string[]; ok: boolean }> {
   const url = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`;
@@ -161,11 +161,27 @@ async function doh(
       signal: options.signal,
     });
     if (!res.ok) return { nxdomain: false, answers: [], ok: false };
-    const json = (await res.json().catch(() => null)) as DohResponse | null;
-    if (!json) return { nxdomain: false, answers: [], ok: false };
+    const json: unknown = await res.json().catch(() => null);
+    if (!json || typeof json !== 'object' || Array.isArray(json)) return { nxdomain: false, answers: [], ok: false };
+    const response = json as Record<string, unknown>;
+    // HTTP success does not imply DNS success. In particular, SERVFAIL and
+    // REFUSED must remain unknown instead of fabricating absent records.
+    if ((response.Status !== 0 && response.Status !== 3) || (response.TC !== undefined && response.TC !== false)) {
+      return { nxdomain: false, answers: [], ok: false };
+    }
+    const answers = response.Answer === undefined ? [] : response.Answer;
+    if (!Array.isArray(answers) || answers.some((answer: unknown) => {
+      if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return true;
+      const record = answer as Record<string, unknown>;
+      return !Number.isInteger(record.type) || (record.type as number) < 1 || (record.type as number) > 65_535 || typeof record.data !== 'string';
+    })) return { nxdomain: false, answers: [], ok: false };
     return {
-      nxdomain: json?.Status === 3,
-      answers: (json?.Answer ?? []).map((answer) => String(answer.data ?? '')).filter(Boolean),
+      nxdomain: response.Status === 3,
+      // CNAMEs may accompany the terminal answer but are not themselves an
+      // address, mail exchanger, SPF record or DMARC record.
+      answers: (answers as { type: number; data: string }[])
+        .filter((answer) => answer.type === DNS_RECORD_TYPES[type])
+        .map((answer) => answer.data).filter(Boolean),
       ok: true,
     };
   } catch {

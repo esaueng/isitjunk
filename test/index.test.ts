@@ -277,7 +277,7 @@ describe('email() handler', () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (url.includes('cloudflare-dns.com') && url.includes('type=A')) {
-          return Response.json({ Status: 0, Answer: [{ data: '203.0.113.10' }] });
+          return Response.json({ Status: 0, Answer: [{ type: 1, data: '203.0.113.10' }] });
         }
         if (url.includes('cloudflare-dns.com') && url.includes('type=AAAA')) {
           return Response.json({ Status: 0, Answer: [] });
