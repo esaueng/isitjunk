@@ -18,6 +18,70 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('DNS response evidence', () => {
+  const verifyWithDns = async (response: unknown | ((type: string) => unknown)) => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'cloudflare-dns.com') {
+        return Response.json(typeof response === 'function' ? response(url.searchParams.get('type') ?? '') : response);
+      }
+      if (url.hostname === 'rdap.org') return Response.json({ events: [] });
+      return new Response('<title>Available</title>');
+    });
+    return (await verifyDomains(BASE, { fetcher }))[0];
+  };
+
+  it.each([2, 5, 9, 16, -1, '0', null, undefined])('keeps unsuccessful or malformed DNS status %s unknown and partial', async (Status) => {
+    const evidence = await verifyWithDns({ Status, Answer: [] });
+    expect(evidence.dns).toEqual({ resolves: null, hasMx: null, hasSpf: null, dmarcPolicy: null });
+    expect(evidence.checkedAt).toBe('partial');
+  });
+
+  it.each([
+    { Status: 0, TC: true, Answer: [] },
+    { Status: 0, TC: 'true', Answer: [] },
+    { Status: 0, Answer: {} },
+    { Status: 0, Answer: null },
+    { Status: 0, Answer: [null] },
+    { Status: 0, Answer: [{ type: 1, data: 42 }] },
+    { Status: 0, Answer: [{ type: '1', data: '203.0.113.10' }] },
+    { Status: 0, Answer: [{ data: '203.0.113.10' }] },
+  ])('does not turn truncated or malformed answers into definitive evidence %#', async (response) => {
+    const evidence = await verifyWithDns(response);
+    expect(evidence.dns).toEqual({ resolves: null, hasMx: null, hasSpf: null, dmarcPolicy: null });
+    expect(evidence.checkedAt).toBe('partial');
+  });
+
+  it('does not count CNAME-only answers as terminal address, MX or SPF records', async () => {
+    const evidence = await verifyWithDns({ Status: 0, Answer: [{ type: 5, data: 'alias.example.net.' }] });
+    expect(evidence.dns).toEqual({ resolves: false, hasMx: false, hasSpf: false, dmarcPolicy: null });
+    expect(evidence.checkedAt).toBe('complete');
+  });
+
+  it('uses the requested terminal records in CNAME chains and preserves successful independent lookups', async () => {
+    const evidence = await verifyWithDns((type: string) => ({
+      Status: type === 'AAAA' ? 2 : 0,
+      Answer: type === 'AAAA' ? [] : [
+        { type: 5, data: 'alias.example.net.' },
+        ...(type === 'A' ? [{ type: 1, data: '203.0.113.10' }] : []),
+        ...(type === 'MX' ? [{ type: 15, data: '10 mail.example.net.' }] : []),
+        ...(type === 'TXT' ? [{ type: 16, data: '"v=spf1 -all"' }] : []),
+      ],
+    }));
+    expect(evidence.dns).toMatchObject({ resolves: true, hasMx: true, hasSpf: true });
+    expect(evidence.checkedAt).toBe('partial');
+  });
+
+  it('keeps successful empty and NXDOMAIN lookups distinct from resolver failure', async () => {
+    const empty = await verifyWithDns({ Status: 0 });
+    expect(empty.dns).toMatchObject({ resolves: false, hasMx: false, hasSpf: false });
+    expect(empty.checkedAt).toBe('complete');
+    const absent = await verifyWithDns({ Status: 3 });
+    expect(absent.dns).toMatchObject({ resolves: false, hasMx: false, hasSpf: false });
+    expect(absent.website.status).toBe('nxdomain');
+  });
+});
+
 describe('bounded verification of attacker input', () => {
   it('discards oversized company claims without losing independent domain facts', async () => {
     const fetcher = vi.fn(async () => Response.json({ Status: 0, Answer: [] }));
@@ -98,7 +162,7 @@ describe('verifyDomains', () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.includes('cloudflare-dns.com') && url.includes('type=A')) {
-          return Response.json({ Status: 0, Answer: [{ data: '203.0.113.10' }] });
+          return Response.json({ Status: 0, Answer: [{ type: 1, data: '203.0.113.10' }] });
         }
         if (url.includes('cloudflare-dns.com') && url.includes('type=AAAA')) {
           return Response.json({ Status: 0, Answer: [] });
@@ -110,7 +174,7 @@ describe('verifyDomains', () => {
           return Response.json({ Status: 0, Answer: [] });
         }
         if (url.includes('cloudflare-dns.com') && url.includes('type=TXT')) {
-          return Response.json({ Status: 0, Answer: [{ data: '"v=spf1 include:spf.example -all"' }] });
+          return Response.json({ Status: 0, Answer: [{ type: 16, data: '"v=spf1 include:spf.example -all"' }] });
         }
         if (url === 'https://quenvvorthinc.net/') {
           return new Response('<html><title>For sale</title><body>This domain is for sale on GoDaddy.</body></html>');
@@ -171,16 +235,16 @@ describe('verifyDomains', () => {
           throw new Error('AAAA timeout');
         }
         if (url.includes('cloudflare-dns.com') && url.includes('type=A')) {
-          return Response.json({ Status: 0, Answer: [{ data: '203.0.113.10' }] });
+          return Response.json({ Status: 0, Answer: [{ type: 1, data: '203.0.113.10' }] });
         }
         if (url.includes('cloudflare-dns.com') && url.includes('type=MX')) {
-          return Response.json({ Status: 0, Answer: [{ data: '10 mail.example.net.' }] });
+          return Response.json({ Status: 0, Answer: [{ type: 15, data: '10 mail.example.net.' }] });
         }
         if (url.includes('cloudflare-dns.com') && url.includes('name=_dmarc.')) {
-          return Response.json({ Status: 0, Answer: [{ data: '"v=DMARC1; p=reject"' }] });
+          return Response.json({ Status: 0, Answer: [{ type: 16, data: '"v=DMARC1; p=reject"' }] });
         }
         if (url.includes('cloudflare-dns.com') && url.includes('type=TXT')) {
-          return Response.json({ Status: 0, Answer: [{ data: '"v=spf1 -all"' }] });
+          return Response.json({ Status: 0, Answer: [{ type: 16, data: '"v=spf1 -all"' }] });
         }
         if (url === 'https://quenvvorthinc.net/') return new Response('<html><title>Quenvorth</title></html>');
         if (url.includes('rdap.org/domain/quenvvorthinc.net')) return Response.json({ events: [] });
@@ -222,7 +286,7 @@ describe('verifyDomains', () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.includes('cloudflare-dns.com') && url.includes('type=A')) {
-          return Response.json({ Status: 0, Answer: [{ data: '203.0.113.10' }] });
+          return Response.json({ Status: 0, Answer: [{ type: 1, data: '203.0.113.10' }] });
         }
         if (url.includes('cloudflare-dns.com')) return Response.json({ Status: 0, Answer: [] });
         if (url === 'https://quenvvorthinc.net/') {
