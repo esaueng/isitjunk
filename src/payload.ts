@@ -356,9 +356,11 @@ function htmlToPlainText(html: string): string {
     .replace(/&nbsp;/gi, ' ')
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
-    .replace(/&amp;/gi, '&')
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'")
+    // &amp; is decoded last so it cannot manufacture a sequence that an
+    // earlier replacement would then double-unescape (&amp;quot; stays literal).
+    .replace(/&amp;/gi, '&')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n');
 }

@@ -379,9 +379,11 @@ function htmlToText(input: string): string {
   return stripHtmlTags(text)
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+    .replace(/&#39;/g, "'")
+    // &amp; is decoded last so it cannot manufacture a sequence that an
+    // earlier replacement would then double-unescape (&amp;quot; stays literal).
+    .replace(/&amp;/g, '&');
 }
 
 function field(text: string, labels: string[]): string | null {

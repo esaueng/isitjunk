@@ -232,6 +232,16 @@ describe('bounded multiline field extraction', () => {
     expect(performance.now() - start).toBeLessThan(1000);
   });
 
+  it('decodes &amp; last so escaped entity sequences stay literal', async () => {
+    // "&amp;quot;" must unescape to the literal text "&quot;", never to '"'.
+    const raw = 'From: reporter@example.com\r\nTo: report@isitjunk.com\r\nContent-Type: text/html\r\n\r\n'
+      + 'Email: buyer@vendor.example<br>Company: A&amp;quot;B&amp;lt;x';
+    const result = await extractSender({ ...inbound(''), raw });
+    expect(result.method).toBe('contact-form');
+    expect(result.submitterEmail).toBe('buyer@vendor.example');
+    expect(result.claimedCompany).toBe('A&quot;B&lt;x');
+  });
+
   // Differential oracle: the previous per-label multiline regex, used only on
   // short data, must agree with the bounded scan on the field outcome that
   // drives the contact-form path.
