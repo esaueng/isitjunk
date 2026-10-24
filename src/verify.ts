@@ -6,6 +6,7 @@
 import { getDomain, getDomainWithoutSuffix } from 'tldts';
 import { DISPOSABLE_DOMAINS, FREEMAIL_DOMAINS, RDAP_BOOTSTRAP, TOP_BRAND_DOMAINS } from './domain-data';
 import type { DomainEvidence, DomainRole, ExtractedSender } from './types';
+import { stripTrailingDots } from './util';
 
 interface VerifyOptions {
   timeoutMs?: number;
@@ -483,7 +484,7 @@ function emailDomain(value: string | null): string | null {
 }
 
 function registrableDomain(host: string): string | null {
-  const normalized = host.toLowerCase().replace(/\.+$/, '');
+  const normalized = stripTrailingDots(host.toLowerCase());
   return getDomain(normalized, { allowPrivateDomains: true }) ?? (normalized.includes('.') ? normalized : null);
 }
 

@@ -28,6 +28,31 @@ export function json(body: unknown, status = 200, extraHeaders?: Record<string, 
   });
 }
 
+/** Strip only trailing DNS dots, without rescanning runs of interior dots. */
+export function stripTrailingDots(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 46) end--;
+  return value.slice(0, end);
+}
+
+/** Preserve tag stripping while visiting each complete or unclosed span once. */
+export function stripHtmlTags(input: string): string {
+  const parts: string[] = [];
+  let offset = 0;
+  let start = input.indexOf('<');
+  while (start >= 0) {
+    const end = input.indexOf('>', start + 1);
+    if (end < 0) break;
+    if (end > start + 1) {
+      parts.push(input.slice(offset, start), ' ');
+      offset = end + 1;
+    }
+    start = input.indexOf('<', end + 1);
+  }
+  parts.push(input.slice(offset));
+  return parts.join('');
+}
+
 export interface HtmlOptions {
   /** CSP sha256 hashes (base64) of inline <script> blocks the page embeds. None → `script-src 'none'`. */
   scriptHashes?: string[];
