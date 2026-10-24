@@ -12,6 +12,7 @@
 import { MAX_EMAIL_CHARS, RAW_EMAIL_READ_BYTE_LIMIT, REPORT_FROM_EMAIL } from './config';
 import PostalMime from 'postal-mime';
 import type { DomainEvidence, ExtractedSender, InboundEmail } from './types';
+import { stripHtmlTags } from './util';
 
 /**
  * The subset of ForwardableEmailMessage we read. Declared structurally so this
@@ -348,16 +349,18 @@ function rawBody(raw: string): string {
 }
 
 function htmlToPlainText(html: string): string {
-  return html
+  const text = html
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
+    .replace(/<\/p>/gi, '\n');
+  return stripHtmlTags(text)
     .replace(/&nbsp;/gi, ' ')
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
-    .replace(/&amp;/gi, '&')
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'")
+    // &amp; is decoded last so it cannot manufacture a sequence that an
+    // earlier replacement would then double-unescape (&amp;quot; stays literal).
+    .replace(/&amp;/gi, '&')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n');
 }

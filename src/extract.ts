@@ -7,6 +7,7 @@ import PostalMime, { addressParser } from 'postal-mime';
 import type { Address, Email, Mailbox } from 'postal-mime';
 import { getDomain } from 'tldts';
 import type { ExtractedSender, InboundEmail, LlmExtractionResult } from './types';
+import { stripHtmlTags, stripTrailingDots } from './util';
 
 interface ExtractOptions {
   llmExtract?: (input: string) => Promise<LlmExtractionResult | null>;
@@ -30,7 +31,23 @@ const GENERIC_NAMES = new Set([
   'website form',
 ]);
 
-const EMAIL_RE = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/i;
+const EMAIL_LOCAL_CHAR_RE = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]/i;
+const EMAIL_DOMAIN_RE = /[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/iy;
+
+/** Preserve first-substring matching without retrying every suffix of a local part. */
+function findEmail(value: string): string | null {
+  let localStart = 0;
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i];
+    if (char === '@' && i > localStart) {
+      // A sticky domain match cannot search the rest of the field after a bad @.
+      EMAIL_DOMAIN_RE.lastIndex = i + 1;
+      if (EMAIL_DOMAIN_RE.test(value)) return value.slice(localStart, EMAIL_DOMAIN_RE.lastIndex);
+    }
+    if (!EMAIL_LOCAL_CHAR_RE.test(char)) localStart = i + 1;
+  }
+  return null;
+}
 
 export async function extractSender(email: InboundEmail, options: ExtractOptions = {}): Promise<ExtractedSender> {
   const base = await codeExtract(email);
@@ -131,8 +148,7 @@ function attachmentContentToString(content: string | ArrayBuffer | Uint8Array): 
 function extractContactForm(text: string): PartialExtraction | null {
   const submitterEmail = field(text, ['email address', 'email', 'e-mail']);
   const company = field(text, ['company', 'organization', 'business']);
-  if (!submitterEmail || !EMAIL_RE.test(submitterEmail)) return null;
-  const email = submitterEmail.match(EMAIL_RE)?.[0] ?? null;
+  const email = submitterEmail ? findEmail(submitterEmail) : null;
   if (!email || !company) return null;
 
   return {
@@ -149,9 +165,9 @@ function extractContactForm(text: string): PartialExtraction | null {
 
 function extractInlineForward(text: string): PartialExtraction | null {
   const marker =
-    lastIndexOfRegex(text, /-{2,}\s*forwarded message\s*-{2,}/gi) ??
+    lastDashKeywordIndex(text, 'forwarded message') ??
     lastIndexOfRegex(text, /begin forwarded message:/gi) ??
-    lastIndexOfRegex(text, /-{2,}\s*original message\s*-{2,}/gi);
+    lastDashKeywordIndex(text, 'original message');
   if (marker == null) return null;
 
   const block = text.slice(marker).split(/\r?\n/).slice(0, 80);
@@ -180,10 +196,10 @@ function parseForwardedHeaderBlock(lines: string[]): { from?: string; replyTo?: 
     if (!match) continue;
     const key = match[1].toLowerCase();
     let value = match[2].trim();
-    if (!EMAIL_RE.test(value)) {
+    if (!findEmail(value)) {
       for (const next of lines.slice(i + 1, i + 4)) {
         const candidate = htmlToText(next).trim();
-        if (EMAIL_RE.test(candidate)) {
+        if (findEmail(candidate)) {
           value = `${value} ${candidate}`;
           break;
         }
@@ -204,7 +220,7 @@ function parseAddressHeader(value: string): Mailbox | null {
   } catch {
     // Fall through to regex.
   }
-  const email = value.match(EMAIL_RE)?.[0]?.toLowerCase();
+  const email = findEmail(value)?.toLowerCase();
   if (!email) return null;
   const name = value
     .replace(email, '')
@@ -334,25 +350,95 @@ function rawBody(raw: string): string {
   return split.length > 1 ? split.slice(1).join('\n\n') : raw;
 }
 
+function replaceMailtoLinks(input: string): string {
+  const starts = /<a\b/gi;
+  const parts: string[] = [];
+  let offset = 0;
+  let start: RegExpExecArray | null;
+  while ((start = starts.exec(input))) {
+    const end = input.indexOf('>', start.index + 2);
+    if (end < 0) break;
+    const tag = input.slice(start.index, end + 1);
+    // Retain the previous last-mailto behavior and permit '<' in attributes.
+    let address: string | null = null;
+    for (const match of tag.matchAll(/href=["']mailto:([^"']+)["']/gi)) address = match[1];
+    parts.push(input.slice(offset, start.index), address ? ` ${address} ` : tag);
+    offset = end + 1;
+    starts.lastIndex = offset;
+  }
+  parts.push(input.slice(offset));
+  return parts.join('');
+}
+
 function htmlToText(input: string): string {
-  return input
-    .replace(/<a\b[^>]*href=["']mailto:([^"']+)["'][^>]*>/gi, ' $1 ')
-    .replace(/<([a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z0-9.-]+)>/gi, ' $1 ')
+  const text = replaceMailtoLinks(input)
+    .replace(/<([a-z0-9.!#$%&'*+/=?^_`{|}~-]+@([a-z0-9.-]+))>/gi, (tag, email: string, domain: string) =>
+      domain.slice(1, -1).includes('.') ? ` ${email} ` : tag)
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
+    .replace(/<\/p>/gi, '\n');
+  return stripHtmlTags(text)
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+    .replace(/&#39;/g, "'")
+    // &amp; is decoded last so it cannot manufacture a sequence that an
+    // earlier replacement would then double-unescape (&amp;quot; stays literal).
+    .replace(/&amp;/g, '&');
 }
 
 function field(text: string, labels: string[]): string | null {
   for (const label of labels) {
-    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = new RegExp(`^\\s*${escaped}\\s*[:\\-]\\s*(.+)$`, 'im').exec(text);
-    if (match) return cleanField(match[1]);
+    const value = matchField(text, label);
+    if (value !== null) return cleanField(value);
+  }
+  return null;
+}
+
+/**
+ * Equivalent of `^\\s*${label}\\s*[:\\-]\\s*(.+)$` with the `im` flags,
+ * evaluated in linear time. The multiline leading `\s*` rescans interior
+ * blank-line runs at every line start (quadratic on blank-line-heavy bodies),
+ * so each label occurrence is visited directly instead. The capture stays the
+ * exact rest of the matched line — including the engine's backtrack rule when
+ * the whitespace run after the separator reaches the end of the text — so
+ * fields are never truncated or reinterpreted.
+ */
+function matchField(text: string, label: string): string | null {
+  const re = new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+  for (const match of text.matchAll(re)) {
+    const at = match.index ?? 0;
+    // `^` plus `\\s*`: only whitespace that contains a line start may precede
+    // the label, and the label must begin where that whitespace run ends.
+    let start = at;
+    let atLineStart = start === 0;
+    while (start > 0 && isSpaceCode(text.charCodeAt(start - 1))) {
+      start--;
+      if (!atLineStart && isLineTerminatorCode(text.charCodeAt(start))) atLineStart = true;
+    }
+    if (!atLineStart) continue;
+    // `\\s*[:\\-]`: the first non-whitespace after the label must be the
+    // separator.
+    const separator = at + label.length;
+    let cursor = separator;
+    while (cursor < text.length && isSpaceCode(text.charCodeAt(cursor))) cursor++;
+    const code = text.charCodeAt(cursor);
+    if (code !== 58 && code !== 45) continue;
+    // `\\s*(.+)$`: the capture starts at the last position the engine's
+    // greedy whitespace skip could backtrack to with a non-terminator there,
+    // and runs to the end of that line. If the whitespace run reaches the end
+    // of the text, the skip gives back one char at a time until a
+    // non-terminator is found; the separator itself is never re-captured.
+    let valueStart = cursor + 1;
+    while (valueStart < text.length && isSpaceCode(text.charCodeAt(valueStart))) valueStart++;
+    if (valueStart >= text.length) {
+      let back = text.length - 1;
+      while (back > cursor && isLineTerminatorCode(text.charCodeAt(back))) back--;
+      if (back === cursor) continue;
+      valueStart = back;
+    }
+    let lineEnd = valueStart;
+    while (lineEnd < text.length && !isLineTerminatorCode(text.charCodeAt(lineEnd))) lineEnd++;
+    return text.slice(valueStart, lineEnd);
   }
   return null;
 }
@@ -379,8 +465,8 @@ function companyFromName(name: string | null | undefined): string | null {
 }
 
 function normalizeEmail(value: string | null | undefined): string | null {
-  const email = stringValue(value)?.match(EMAIL_RE)?.[0]?.toLowerCase() ?? null;
-  return email;
+  const text = stringValue(value);
+  return text ? findEmail(text)?.toLowerCase() ?? null : null;
 }
 
 function emailDomain(value: string | null | undefined): string | null {
@@ -391,7 +477,7 @@ function emailDomain(value: string | null | undefined): string | null {
 }
 
 function registrableDomain(host: string): string | null {
-  const normalized = host.toLowerCase().replace(/\.+$/, '');
+  const normalized = stripTrailingDots(host.toLowerCase());
   return getDomain(normalized, { allowPrivateDomains: true }) ?? (normalized.includes('.') ? normalized : null);
 }
 
@@ -403,6 +489,69 @@ function headerValue(raw: string, header: string): string {
 function lastIndexOfRegex(text: string, re: RegExp): number | null {
   let last: number | null = null;
   for (const match of text.matchAll(re)) last = match.index ?? last;
+  return last;
+}
+
+function isSpaceCode(code: number): boolean {
+  return (
+    code === 32 ||
+    (code >= 9 && code <= 13) ||
+    code === 160 ||
+    code === 5760 ||
+    (code >= 8192 && code <= 8202) ||
+    code === 8232 ||
+    code === 8233 ||
+    code === 8239 ||
+    code === 8287 ||
+    code === 12288 ||
+    code === 65279
+  );
+}
+
+function isLineTerminatorCode(code: number): boolean {
+  return code === 10 || code === 13 || code === 8232 || code === 8233;
+}
+
+/**
+ * Last index where /-{2,}<keyword>\s*... with dashes on both sides matches —
+ * i.e. `-{2,}\\s*${keyword}\\s*-{2,}` with the `i` flag. The unanchored dash
+ * pattern is quadratic under matchAll on long dash-only bodies (every suffix
+ * of a dash run is retried), so the keyword occurrences are visited directly
+ * and the dash sides are checked by walking the two adjacent runs. Match
+ * order mirrors the regex engine: after a match, its trailing dash run is
+ * consumed, and a leading run that starts inside an already-consumed span
+ * cannot start a new match.
+ */
+function lastDashKeywordIndex(text: string, keyword: string): number | null {
+  const re = new RegExp(keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+  let from = 0;
+  let last: number | null = null;
+  for (const match of text.matchAll(re)) {
+    const at = match.index ?? 0;
+    if (at < from) continue;
+    // Leading side: whitespace, then a run of at least two dashes ending at
+    // the keyword. Both walks stop at `from` — an earlier match span cannot
+    // supply dashes for a later one.
+    let start = at;
+    while (start > from && isSpaceCode(text.charCodeAt(start - 1))) start--;
+    let dashes = 0;
+    while (start > from && text.charCodeAt(start - 1) === 45) {
+      start--;
+      dashes++;
+    }
+    if (dashes < 2) continue;
+    // Trailing side: whitespace, then at least two dashes.
+    let end = at + keyword.length;
+    while (end < text.length && isSpaceCode(text.charCodeAt(end))) end++;
+    let trail = 0;
+    while (end < text.length && text.charCodeAt(end) === 45) {
+      end++;
+      trail++;
+    }
+    if (trail < 2) continue;
+    last = start;
+    from = end;
+  }
   return last;
 }
 
