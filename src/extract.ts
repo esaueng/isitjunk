@@ -13,6 +13,11 @@ interface ExtractOptions {
   llmExtract?: (input: string) => Promise<LlmExtractionResult | null>;
 }
 
+// One extraction may traverse several attached messages. A per-parse MIME
+// depth limit alone does not bound reparsing across attachments or siblings.
+const MAX_MESSAGE_PARSES = 16;
+type ParseBudget = { remaining: number };
+
 type PartialExtraction = Omit<ExtractedSender, 'candidateDomains'> & { candidateDomains?: string[] };
 
 const GENERIC_NAMES = new Set([
@@ -50,12 +55,14 @@ function findEmail(value: string): string | null {
 }
 
 export async function extractSender(email: InboundEmail, options: ExtractOptions = {}): Promise<ExtractedSender> {
-  const base = await codeExtract(email);
+  const budget = { remaining: MAX_MESSAGE_PARSES };
+  const parsed = await safeParse(email.raw, budget);
+  const base = await codeExtract(email, parsed, budget);
   let result = normalizeExtraction(base, email);
 
   if (options.llmExtract && needsLlmExtraction(result)) {
     try {
-      const llm = await options.llmExtract(await buildExtractionInput(email));
+      const llm = await options.llmExtract(buildExtractionInput(email, parsed));
       if (llm) result = normalizeExtraction(mergeLlmExtraction(result, llm), email);
     } catch {
       // LLM extraction is enrichment only. Classification still proceeds with
@@ -66,10 +73,8 @@ export async function extractSender(email: InboundEmail, options: ExtractOptions
   return result;
 }
 
-async function codeExtract(email: InboundEmail): Promise<PartialExtraction> {
-  const parsed = await safeParse(email.raw);
-
-  const rfc822 = parsed ? await innermostAttachedMessage(parsed) : null;
+async function codeExtract(email: InboundEmail, parsed: Email | null, budget: ParseBudget): Promise<PartialExtraction> {
+  const rfc822 = parsed ? await innermostAttachedMessage(parsed, budget) : null;
   if (rfc822) {
     const from = mailboxFromAddress(rfc822.from);
     const replyTo = firstMailbox(rfc822.replyTo);
@@ -108,9 +113,14 @@ async function codeExtract(email: InboundEmail): Promise<PartialExtraction> {
   };
 }
 
-async function safeParse(raw: string): Promise<Email | null> {
+async function safeParse(raw: string | ArrayBuffer | Uint8Array, budget: ParseBudget): Promise<Email | null> {
+  // Exhaustion aborts the entire extraction, rather than selecting a partially
+  // traversed wrapper or sibling as the original sender. Parser failures still
+  // use the existing fallback, but consume an attempt too.
+  if (budget.remaining === 0) throw new Error('Attached-message parsing limit exceeded');
+  budget.remaining--;
   try {
-    return await PostalMime.parse(raw, {
+    return await PostalMime.parse(attachmentContentToString(raw), {
       rfc822Attachments: true,
       forceRfc822Attachments: true,
       attachmentEncoding: 'utf8',
@@ -121,7 +131,7 @@ async function safeParse(raw: string): Promise<Email | null> {
   }
 }
 
-async function innermostAttachedMessage(parsed: Email, depth = 0): Promise<Email | null> {
+async function innermostAttachedMessage(parsed: Email, budget: ParseBudget, depth = 0): Promise<Email | null> {
   let found: Email | null = null;
   for (const attachment of parsed.attachments ?? []) {
     const looksRfc822 =
@@ -130,11 +140,11 @@ async function innermostAttachedMessage(parsed: Email, depth = 0): Promise<Email
       (typeof attachment.content === 'string' && /^from:/im.test(attachment.content));
     if (!looksRfc822) continue;
 
-    const content = attachmentContentToString(attachment.content);
-    if (!content) continue;
-    const child = await safeParse(content);
+    const content = attachment.content;
+    if (typeof content === 'string' ? !content : !content.byteLength) continue;
+    const child = await safeParse(content, budget);
     if (!child) continue;
-    found = (await innermostAttachedMessage(child, depth + 1)) ?? child;
+    found = (await innermostAttachedMessage(child, budget, depth + 1)) ?? child;
   }
   return depth > 0 ? found ?? parsed : found;
 }
@@ -318,8 +328,7 @@ function needsLlmExtraction(result: ExtractedSender): boolean {
   return result.confidence === 'low' || Boolean(result.originalFromEmail && !result.claimedCompany);
 }
 
-async function buildExtractionInput(email: InboundEmail): Promise<string> {
-  const parsed = await safeParse(email.raw);
+function buildExtractionInput(email: InboundEmail, parsed: Email | null): string {
   const headers = [
     `Envelope-From: ${email.from}`,
     `Envelope-To: ${email.to}`,
