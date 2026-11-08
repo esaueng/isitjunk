@@ -22,17 +22,17 @@
     "config:deployment": "node scripts/deployment.mjs --prepare-only"
   },
   "dependencies": {
-    "jose": "^6.2.13",
+    "jose": "^6.2.15",
     "mimetext": "^3.0.16",
-    "postal-mime": "^4.1.4",
+    "postal-mime": "^4.2.0",
     "tldts": "^7.4.19"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261028.1",
+    "@cloudflare/workers-types": "^5.20261104.1",
     "@types/node": "^26.6.6",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.5",
-    "wrangler": "^4.155.0"
+    "vitest": "^5.1.0",
+    "wrangler": "^4.157.0"
   },
   "overrides": {
     "undici": "7.30.1"
